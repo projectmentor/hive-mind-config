@@ -63,11 +63,11 @@ def test_the_licence_is_kept_and_the_readme_states_it():
 
 def test_every_verb_the_readme_documents_exists_and_nothing_else():
     readme = (REPO / "README.md").read_text()
-    verbs = {"schema", "list", "get", "explain", "version", "status", "doctor"}
+    verbs = {"schema", "list", "get", "explain", "version", "status", "doctor", "set", "unset"}
     assert all(f"hconfig {v}" in readme or v in ("status", "doctor") for v in verbs)
     r = run(HCONFIG, "--help")
     assert r.returncode == 0 and all(v in r.stdout for v in verbs)
-    assert not {"set", "unset", "validate", "audit"} & set(r.stdout.replace(",", " ").replace("{", " ").split())
+    assert not {"validate", "audit", "import", "export"} & set(r.stdout.replace(",", " ").replace("{", " ").split())
 
 
 # ── the core's own conformance check ──────────────────────────────────────────────────────────────

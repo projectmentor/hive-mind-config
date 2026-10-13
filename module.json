@@ -13,19 +13,21 @@
   "--json"
  ],
  "files": {
-  ".github/workflows/ci.yml": "27dace2bfca6a9f2368f7635e72414e67fa80937418c62cde0a4c4d23b5cf115",
+  ".github/workflows/ci.yml": "ddbabe29d7e862ce89838847884bece9c8cbf67283f9ac71347384175132e66e",
   ".gitignore": "f6b228e652a56584f0c298fb331d5569c101b5705d3b9563412aa2c390e9726e",
   "LICENSE": "ba29e3936c3d0e11aea8de16b1b66fded1558185d618f88de81d975fa4df5e98",
-  "README.md": "6de50a5fb3b910102ff587e511963cdf8b702762a406d472a80e5d69e232ea60",
+  "README.md": "fd6c4a13d7fe887ace35401f045991fb5dc9abd98e15c21f3f1e74209695fc90",
   "changelog.d/h1-registry-read-verbs.md": "5a74548fcb29e91f0755615f12048c7114ad3e7a0b42df5f0e01859985a2641c",
-  "hconfig": "e54f72219caebdf5ea4535ce2c238b8200461068e5786afded6cddc468f0d14b",
+  "changelog.d/h2-set-unset.md": "d4b174171c591809bed29e3ec630d47e760e5e57e5de0392d1038a750e00fe28",
+  "hconfig": "6f9a2c34d47dc726b3a6f59d5ed725e4a85abf0f1d9b32b8a0212b8084450799",
   "scripts/sign_manifest.py": "f2adb8d9087958d204dc0730dd1de81a53a841345e6d17eaa79df79be4619321",
-  "tests/conftest.py": "371e3674702b799f315d0b5d9c28ce5890504fa602535bdf6537336a630f349b",
+  "tests/conftest.py": "1f325ce876158ba5d8b358dc779a1eb86bb27f06d6ec94a14b2272a071ae991c",
   "tests/golden/registry.json": "aa738278e2741249fc21c4ce58b99448f2b8ba262b8a884347b6d7f5a94569ee",
   "tests/golden/schema.json": "c5ff0fc8fef0d2a2dddf0c0d6518a01c5f9599f73ea932edef5872d9f497e6c5",
-  "tests/stubcore.py": "e241c6d34358f23bb4032c7a1f769993bfd71690d0d9dce4a748d9ae8cedf44c",
-  "tests/test_registry.py": "685ae42d60bcd5e61b258860dfabccefea67fc06e8a414897519f796f50c2ae4",
-  "tests/test_scaffold.py": "761616a1b5c2f8a02c1bdee4517fc50aa249c0d410f57d564f8dbf2a0030f2cc"
+  "tests/stubcore.py": "506b556b223fa7c80c82a86ecf4fbaa0a61b23516786aab5812e7a74f9ed1e5a",
+  "tests/test_registry.py": "2a2eb429fd6ab5a6a03f60dad0aeb8350841f4d7a8a6e924a4136fd064ed6047",
+  "tests/test_scaffold.py": "db6cf49a7f3c2777ef9cb1fbd775ab9591e9bf412828c1e31748f04d277ab306",
+  "tests/test_set.py": "d60f2d7e0d7794aa9612baead9aa9eaa9078dc899cb61143c20503ce4ccda5ac"
  },
  "min_core": "3.1",
  "name": "hconfig",

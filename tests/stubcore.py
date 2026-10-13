@@ -10,12 +10,19 @@ import sys
 from pathlib import Path
 
 STUB = '''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 prog, args = sys.argv[1], sys.argv[2:]
 answers = json.load(open(os.environ["STUB_ANSWERS"]))
-with open(os.environ["STUB_LOG"], "a") as f:
-    f.write(json.dumps({"argv": [prog] + args, "env": sorted(os.environ), "stdin": sys.stdin.read()}) + "\\n")
+t0 = time.time()
+stdin = sys.stdin.read()
 a = answers.get(" ".join([prog] + args))
+if a is None:
+    a = answers.get(" ".join([prog] + args[:-1] + ["*"]))      # a trailing wildcard: the value of a write
+if a is not None:
+    time.sleep(a.get("sleep", 0))
+with open(os.environ["STUB_LOG"], "a") as f:
+    f.write(json.dumps({"argv": [prog] + args, "env": sorted(os.environ), "stdin": stdin, "t0": t0,
+                        "t1": time.time(), "environ": dict(os.environ)}) + "\\n")
 if a is None:
     sys.stderr.write("stub: no answer for " + " ".join([prog] + args) + "\\n")
     sys.exit(97)

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  # The core the checks run against. `min_core` is "4.0": the manifest is contract 1.
+  # The core the checks run against. `min_core` is "3.1" (the contract line release/4.0 still reports); the 4.0 config verbs are what the tests need.
   CORE_REF: release/4.0
   CORE_OWNER: projectmentor      # split so `module check`'s identifying-data lint does not flag this file
   CORE_REPO: hive-mind
