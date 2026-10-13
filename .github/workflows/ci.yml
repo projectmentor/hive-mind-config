@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 env:
-  # The core the checks run against. `min_core` is "3.1" (the contract line release/4.0 still reports); the 4.0 config verbs are what the tests need.
-  CORE_REF: release/4.0
+  # The core the checks run against. `min_core` is "4.0", so the core must report contract 4.0: until the contract bump
+  # (hive-mind#462) is on release/4.0, use its branch. Flip this to release/4.0 when #462 merges.
+  CORE_REF: implementer/4.0-contract-bump
   CORE_OWNER: projectmentor      # split so `module check`'s identifying-data lint does not flag this file
   CORE_REPO: hive-mind
 
@@ -42,11 +43,8 @@ jobs:
         run: git clone --quiet --depth 1 --branch "$CORE_REF" "https://github.com/$CORE_OWNER/$CORE_REPO" "$RUNNER_TEMP/core"
       - name: Install dependencies
         run: pip install -r "$RUNNER_TEMP/core/requirements.txt"
-      # STUBBED until the owner provisions this repository's publisher key: the manifest is unsigned, so the digests
-      # are checked and the missing signature is tolerated. Drop --allow-unsigned (and the unsigned warning below)
-      # when module.json.sig is committed, and add the `module add` step hwatch-dev has.
-      - name: "The manifest's files are current (signature stubbed, no publisher key yet)"
-        run: python3 -I scripts/sign_manifest.py --check --allow-unsigned --core "$RUNNER_TEMP/core"
+      - name: The manifest is signed and its files are current
+        run: python3 -I scripts/sign_manifest.py --check --core "$RUNNER_TEMP/core"
       - name: module check --run (conformance, status and doctor shapes, identifying-data lint)
         run: |
           cd "$RUNNER_TEMP/core"
@@ -55,6 +53,5 @@ jobs:
           import json, sys
           out = json.load(open(sys.argv[1]))
           assert out["ok"], out["errors"]
-          rest = [w for w in out["warnings"] if "unsigned" not in w]
-          assert not rest, rest          # the identifying-data lint is clean
+          assert not out["warnings"], out["warnings"]          # the identifying-data lint is clean
           PY

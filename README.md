@@ -7,8 +7,7 @@ hconfig 0.1 is a command-line tool with a JSON protocol, not a service. It has n
 no key and reads no passphrase. It writes only through the core's own verbs. A dashboard runs it as a subprocess.
 
 Needs HiveMind core 4.0 or newer (`hv config schema|show|node` and `hive-mind module list|config … --json`). The
-manifest's `min_core` is `3.1` because the core compares it with its contract version, which the 4.0 line still reports
-as `3.1`; on a core without those verbs hconfig refuses with `core-failed` and says so.
+manifest's `min_core` is `4.0`, so a 3.x core refuses the install.
 
 ## Install
 
@@ -16,8 +15,7 @@ as `3.1`; on a core without those verbs hconfig refuses with `core-failed` and s
 hive-mind module add hconfig --from <this repository's URL> --publisher <key>
 ```
 
-The release is not signed yet: no publisher key exists for this repository, so the core refuses the tree until one does
-(see "Signing" below).
+The manifest is signed (`module.json.sig`) with the hconfig publisher key; pass `--publisher` the key in `module.json`.
 
 ## Use
 
@@ -129,9 +127,9 @@ caller; the manifest's `trust: confined` describes the unit hconfig does not hav
 
 ## Signing
 
-`scripts/sign_manifest.py` signs `module.json` from `HCONFIG_PUBLISHER_SEED` (environment only). No publisher key is
-provisioned for this repository, so the manifest carries a placeholder `publisher` the core refuses to decode and there
-is no `module.json.sig`. `--files` refreshes the digests meanwhile; CI runs `--check --allow-unsigned`.
+`scripts/sign_manifest.py` signs `module.json` from `HCONFIG_PUBLISHER_SEED` (environment only) and writes
+`module.json.sig`. `--check` verifies the signature and the digests with no seed, and CI runs it. Re-sign after any
+change to a tracked file: `git add` new files first, sign, `--check`, then commit.
 
 ## Tests
 
