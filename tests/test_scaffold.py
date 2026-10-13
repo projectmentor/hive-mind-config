@@ -36,7 +36,7 @@ def manifest():
 
 def test_the_manifest_asks_for_what_the_design_says():
     m = manifest()
-    assert (m["name"], m["min_core"], m["contract"]) == ("hconfig", "3.1", 1)   # see sign_manifest.py: the 4.0 line still reports contract 3.1
+    assert (m["name"], m["min_core"], m["contract"]) == ("hconfig", "4.0", 1)
     assert m["cli"] == {"name": "hconfig", "command": ["hconfig"]}
     assert m["reads"] == [] and m["config_schema"] == {}
     assert m["quota"] == {"per_hour": 0, "per_day": 0}

@@ -7,8 +7,8 @@ hconfig 0.1 is a command-line tool with a JSON protocol, not a service. It has n
 no key and reads no passphrase. It writes only through the core's own verbs. A dashboard runs it as a subprocess.
 
 Needs HiveMind core 4.0 or newer (`hv config schema|show|node` and `hive-mind module list|config … --json`). The
-manifest's `min_core` is `3.1` because the core compares it with its contract version, which the 4.0 line still reports
-as `3.1`; on a core without those verbs hconfig refuses with `core-failed` and says so.
+manifest's `min_core` is `4.0`, so an older core refuses to install it; on a core without those verbs hconfig itself
+refuses with `core-failed` and says so.
 
 ## Install
 

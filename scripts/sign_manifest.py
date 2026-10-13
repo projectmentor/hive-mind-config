@@ -41,9 +41,8 @@ PLACEHOLDER_PUBLISHER = base64.b64encode(bytes([0xED]) + b"\xff" * 30 + b"\x7f")
 DEFAULTS = {
     "name": "hconfig",
     "version": "0.1.0-dev",
-    # The core compares this with its CONTRACT_VERSION, which release/4.0 still reports as "3.1" (a contract bump is the
-    # owner's call). It cannot yet say "4.0"; `hconfig` itself refuses, with a hint, on a core without the 4.0 verbs.
-    "min_core": "3.1",
+    # The core compares this with its CONTRACT_VERSION; 4.0 is the contract that has the config verbs hconfig drives.
+    "min_core": "4.0",
     "contract": 1,
     "trust": "confined",
     "cli": {"name": "hconfig", "command": ["hconfig"]},

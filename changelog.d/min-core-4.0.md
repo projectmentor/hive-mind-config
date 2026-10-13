@@ -1,0 +1,1 @@
+- hconfig: the manifest's `min_core` is `4.0` (it was `3.1` while the core line still reported 3.1), so a core older than the 4.0 contract refuses to install it.
