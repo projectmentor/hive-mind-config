@@ -151,7 +151,7 @@ TABLE = {                                  # id: (class, scope, visibility, writ
     "x-alpha:greeting": ("module", "node", "operator", "operator"),
     "x-alpha:token": ("module", "node", "operator", "operator"),           # a secret is never a viewer's
     "x-alpha:limit": ("governed", "fleet", "viewer", "owner"),
-    "x-alpha:operator.name": ("governed", "fleet", "viewer", "owner"),     # identifying: see the next test
+    "x-alpha:operator.name": ("governed", "fleet", "operator", "owner"),   # identifying: never a viewer's (hconfig 5)
     "x-alpha:seat.{role}.enabled": ("governed", "fleet-node", "viewer", "owner"),
     "x-beta:mode": ("module", "node", "operator", "operator"),
 }
@@ -354,7 +354,8 @@ def test_status_and_doctor_answer_in_the_contract_shapes(stub):
     st = json.loads(run("status", "--json", env=env).stdout)
     assert st == {"schema": 1, "state": "ok", "version": "0.1.0-dev", "problems": [], "detail": {}}
     d = json.loads(run("doctor", "--json", env=env).stdout)
-    assert d["schema"] == 1 and [r["level"] for r in d["results"]] == ["ok"]
+    assert d["schema"] == 1 and d["results"][0] == {"level": "ok", "check": "core-verbs",
+                                                    "message": "the core's config verbs answer"}
 
 
 def test_status_and_doctor_with_no_core_are_degraded_and_warn_but_exit_zero(tmp_path):
@@ -365,3 +366,10 @@ def test_status_and_doctor_with_no_core_are_degraded_and_warn_but_exit_zero(tmp_
     r = run("doctor", "--json", env=env)
     res = json.loads(r.stdout)["results"]
     assert r.returncode == 0 and [x["level"] for x in res] == ["warn"] and res[0]["fix_hint"]
+
+
+def test_an_identifying_governed_key_is_operator_visibility(hive):
+    _, out = hive.json("list")
+    gov = [r for r in out["keys"] if r["class"] == "governed" and r["identifying"]]
+    assert gov and all(r["visibility"] == "operator" for r in gov)
+    assert all(r["visibility"] == "viewer" for r in out["keys"] if r["class"] == "governed" and not r["identifying"] and not r["secret"])

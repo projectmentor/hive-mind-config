@@ -239,7 +239,7 @@
    "description": "name",
    "secret": false,
    "identifying": true,
-   "visibility": "viewer",
+   "visibility": "operator",
    "writable_by": "owner",
    "write_via": "hive-mind module config alpha set operator.name <value> --fleet",
    "warnings": [

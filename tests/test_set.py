@@ -44,7 +44,7 @@ def stub(tmp_path):
 
 def writes(calls):
     """The calls that could change something: a `set` or `unset` of the core's node or module config verbs."""
-    return [c for c in calls() if any(a in ("set", "unset") for a in c["argv"][1:8])]
+    return [c for c in calls() if any(a in ("set", "unset") for a in c["argv"][1:12])]
 
 
 def audit_lines(state):
@@ -79,8 +79,7 @@ def test_the_secret_reaches_the_core_on_stdin_only(stub):
 def test_owner_only_keys_start_no_write_and_name_the_command(stub):
     (env, calls), state = stub
     for id_, via in (("core:cap_self", "hive-mind config set cap_self <value>"),
-                     ("x-alpha:limit", "hive-mind module config alpha set limit <value> --fleet"),
-                     ("x-alpha:seat.dev.enabled", "--fleet-node <device>")):
+                     ("core:quorum_m", "hive-mind config set quorum_m <value>")):
         r = run("set", id_, "1", "--json", env=env)
         out = json.loads(r.stdout)
         assert r.returncode == 1 and out["error"]["code"] == "owner-only" and via in out["error"]["hint"], id_
@@ -109,7 +108,8 @@ def test_typed_refusals_unknown_not_installed_env_and_unset_of_a_node_key(stub):
     (env, calls), state = stub
     for argv, code in ((("set", "core:nope", "1"), "unknown-key"), (("set", "x-alpha:nope", "1"), "unknown-key"),
                        (("set", "x-gamma:k", "1"), "not-installed"), (("set", "node:bind", "100.64.0.2"), "env-overridden"),
-                       (("unset", "node:port"), "read-only"), (("unset", "core:cap_self"), "owner-only")):
+                       (("unset", "node:port"), "read-only"), (("unset", "core:cap_self"), "owner-only"),
+                       (("unset", "x-alpha:limit"), "read-only")):
         r = run(*argv, "--json", env=env)
         out = json.loads(r.stdout)
         assert r.returncode == 1 and out["error"]["code"] == code and out["ok"] is False, argv
@@ -354,6 +354,6 @@ def test_nothing_in_the_hive_changes_when_a_set_is_refused(whive):
                 and p.name != "lock" and ".git" not in p.parts and "src-" not in str(p)}
     before = snap()
     for argv in (("set", "core:cap_self", "0.1"), ("set", "node:port", "0"), ("set", "x-alpha:token", "plain"),
-                 ("set", "x-alpha:limit", "3"), ("unset", "node:port"), ("set", "x-alpha:nope", "1")):
+                 ("unset", "x-alpha:limit"), ("unset", "node:port"), ("set", "x-alpha:nope", "1")):
         assert whive.hconfig(*argv).returncode == 1, argv
     assert snap() == before

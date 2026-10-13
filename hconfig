@@ -5,9 +5,13 @@
     hconfig list [PREFIX] [--class node|module|governed] [--json]
     hconfig get ID [--json]                   one record
     hconfig explain ID [--json]               the record and what its value means for this hive
-    hconfig set ID [VALUE] [--stdin] [--non-interactive] [--json]    node: keys and node-scope module keys
-    hconfig unset ID [--json]                                         node-scope module keys
-    hconfig status --json | doctor --json     the module contract's status and doctor answers (the core's verbs reachable)
+    hconfig set ID [VALUE] [--stdin] [--device ID] [--non-interactive] [--json]
+                                              node: keys, module keys, and (signed, through the unlock agent) a module's
+                                              fleet and fleet-node keys; `core:` keys and node:owner_quota are owner-only
+    hconfig unset ID [--json]                 node-scope module keys
+    hconfig validate [MODULE] [--json]        what the core's own validators say about every module and the node keys
+    hconfig doctor --json                     the module contract's doctor answer, with the configuration checks
+    hconfig status --json                     the module contract's status answer (the core's verbs reachable)
     hconfig version
 
 The classes are `node:<key>` (the node files), `x-<module>:<key>` with scope `node` (module class) and `core:<key>` or
@@ -15,12 +19,16 @@ The classes are `node:<key>` (the node files), `x-<module>:<key>` with scope `no
 `hv config schema|show|node list --json` and `hive-mind module list --json` and `module config <name> schema|list --json`
 as subprocesses and merges nothing itself. It holds no key, reads no passphrase and opens no socket. `set` and `unset` write
 only through the core's own verbs (`hv config node set`, `hive-mind module config <name> set|unset`), validate before
-they start one, serialize on one lock, and append a line to a local audit file. Secrets print as `********`, are accepted
-only on stdin, and a refusal never carries a value. Exit codes: 0 ok, 1 refused (nothing changed), 2 usage.
+they start one, serialize on one lock, and append a line to a local audit file. A signed write is the core's: it runs
+`module config set --non-interactive` and the core signs through the owner-unlock agent or refuses with exit 5, which is
+`owner-locked` here (exit 5); no passphrase ever reaches this program. Secrets print as `********`, are accepted only on
+stdin, and a refusal never carries a value. Exit codes: 0 ok, 1 refused (nothing changed), 2 usage, 5 owner key locked.
 """
 
 import argparse
+import calendar
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -44,9 +52,9 @@ IDENTIFYING_WARNING = "identifying: a fleet value is journaled and visible to ev
 
 
 class Refused(Exception):
-    def __init__(self, code, message, hint="", key=None):
+    def __init__(self, code, message, hint="", key=None, status=1):
         super().__init__(message)
-        self.code, self.message, self.hint, self.key = code, message, hint, key
+        self.code, self.message, self.hint, self.key, self.status = code, message, hint, key, status
 
 
 # ── the core, as subprocesses ─────────────────────────────────────────────────────────────────────
@@ -194,7 +202,7 @@ def _module_records(module, schema, rows):
         scope = spec.get("scope", "node")
         governed = scope != "node"
         secret, ident = bool(spec.get("secret")), bool(spec.get("identifying"))
-        kw = dict(secret=secret, identifying=ident, visibility="viewer" if governed else "operator",
+        kw = dict(secret=secret, identifying=ident, visibility="viewer" if governed and not ident and not secret else "operator",
                   writable_by="owner" if governed else "operator", write_via=_write_via(module, key, scope, secret))
         cls = "governed" if governed else "module"
         if "{" in key:
@@ -426,6 +434,14 @@ def validate(rec, text):
         if ("min" in rec and n < rec["min"]) or ("max" in rec and n > rec["max"]):
             raise bad(f"outside {rec.get('min', '-inf')}..{rec.get('max', 'inf')}")
         return n if rec["class"] == "node" else text
+    if kind == "float":
+        try:
+            x = float(text)
+        except ValueError:
+            raise bad("not a number") from None
+        if x != x or x in (float("inf"), float("-inf")) or ("min" in rec and x < rec["min"]) or ("max" in rec and x > rec["max"]):
+            raise bad("not a finite number within the range")
+        return x
     if kind == "enum":
         val = text.strip().lower() if rec["class"] == "node" else text
         if val not in rec["values"]:
@@ -455,7 +471,34 @@ def _core_error(rc, out, err):
     return f"the core refused (exit {rc})" + (f": {line}" if line else "")
 
 
-def _run_write(rec, action, value):
+DEVICE_ID = re.compile(r"k1:[0-9a-f]{16}\Z")
+
+
+def agent_dirs():
+    """The two directories the owner-unlock agent's socket can be in: the one this environment looks in first, and the
+    other. The core's rule: `$XDG_RUNTIME_DIR/hive-mind` if that is absolute, else `$TMPDIR/hive-mind-<uid>`."""
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    tmp = os.path.join(os.environ.get("TMPDIR") or "/tmp", f"hive-mind-{os.getuid()}")
+    xdg = os.path.join(xdg, "hive-mind") if xdg and os.path.isabs(xdg) else None
+    return (xdg or tmp), (tmp if xdg else None)
+
+
+def this_device():
+    rc, out, _ = core_run("hv", "whoami")
+    m = re.search(r"^device:\s+(k1:[0-9a-f]{16})\b", out, re.M) if rc == 0 else None
+    if not m:
+        raise Refused("core-failed", "could not read this device's id from `hv whoami`", "run it by hand")
+    return m.group(1)
+
+
+def _owner_locked(rec, mod):
+    looked, _ = agent_dirs()
+    return Refused("owner-locked", f"the owner key is locked, or the unlock agent would not sign {rec['id']} (module {mod})",
+                   f"run `hive-mind owner unlock --module {mod}` on your own terminal; the agent socket was looked for in "
+                   f"{looked}", rec["id"], status=5)
+
+
+def _run_write(rec, action, value, device=None):
     """Run the one core verb that writes `rec`'s layer. Returns (changed, note)."""
     key = rec["id"].split(":", 1)[1]
     if rec["class"] == "node":
@@ -468,6 +511,21 @@ def _run_write(rec, action, value):
                 pass
     else:
         mod = rec["id"][2:].split(":", 1)[0]
+        if rec["class"] == "governed":          # signed: the core signs through the agent or refuses with exit 5
+            layer = ["--fleet"] if rec["scope"] == "fleet" else ["--fleet-node", device]
+            if rec["secret"]:                   # a secret goes to the core on stdin and is never in any argv
+                rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", *layer, "--stdin", "--", mod,
+                                        "set", key, stdin_text=value + "\n")
+            else:
+                rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", *layer, "--", mod, "set",
+                                        key, value)
+            if rc == 5:
+                raise _owner_locked(rec, mod)
+            if rc == 0 and ("nothing signed" in out or "nothing changed" in out):
+                return False, None              # the core compared the full key and signed nothing
+            if rc != 0:
+                raise Refused("core-failed", _core_error(rc, out, err), "run the core verb by hand to see more", rec["id"])
+            return True, None
         if action == "unset":
             rc, out, err = core_run("hive-mind", "module", "config", mod, "unset", key)
         elif rec["secret"]:                    # a secret goes to the core on stdin and is never in any argv
@@ -502,8 +560,14 @@ def do_write(args, action, value):
     if action == "set" and rec["secret"] and args.value is not None:
         raise Refused("secret-on-argv", f"{args.id} is a secret and is never taken on a command line",
                       "pass it on stdin with --stdin", args.id)
-    if rec["writable_by"] == "owner":
+    if rec["class"] == "governed" and args.id.startswith("core:"):
         raise Refused("owner-only", f"{args.id} is changed by the owner, signed, not by hconfig 0.1", rec["write_via"], args.id)
+    if rec["class"] == "governed" and action == "unset":
+        raise Refused("read-only", f"{args.id} is a fleet value: it cannot be removed, only set again", rec["write_via"], args.id)
+    device = getattr(args, "device", None)
+    if device is not None and (rec["scope"] != "fleet-node" or not DEVICE_ID.match(device)):
+        raise Refused("validation", "--device names a device (k1:<16 hex>) and only applies to a fleet-node key",
+                      "omit it to write this device's value", args.id)
     if rec["class"] == "node" and action == "unset":
         raise Refused("read-only", f"{args.id} cannot be unset: the core has no verb for it", "set it to its default", args.id)
     if rec["class"] == "node" and rec["source"] == "env":
@@ -512,13 +576,21 @@ def do_write(args, action, value):
     canon = validate(rec, value) if action == "set" else None
     with Locked():
         rec = _resolve(Registry(args.id), args.id)
-        in_layer = rec["source"] == "node"      # the layer being written: the node file / the module's node config
+        mine = True
+        if rec["scope"] == "fleet-node":
+            me = this_device()
+            device = device or me
+            mine = device == me
+        # The layer being written: the node file, the module's node config, or the journal's own entry for the full key.
+        # The merged answer is this device's, so another device's fleet-node entry cannot be compared here: the core
+        # compares it (and signs nothing if it is equal).
+        in_layer = mine and rec["source"] == rec["scope"]
         if (action == "set" and in_layer and _same(rec, canon)) or (action == "unset" and not in_layer):
             return rec, False, None
         old = rec["value"] if in_layer else None
         log = audit_open()
         try:
-            changed, note = _run_write(rec, action, value)
+            changed, note = _run_write(rec, action, value, device)
         except Refused as e:
             audit_write(log, rec, action, False, e.code, old, value)
             raise
@@ -579,7 +651,7 @@ def refuse(args, e):
                                                                     "hint": e.hint}}, indent=2))
     else:
         print(f"hconfig: {e.message}" + (f" ({e.hint})" if e.hint else ""), file=sys.stderr)
-    return 1
+    return e.status
 
 
 # ── verbs ─────────────────────────────────────────────────────────────────────────────────────────
@@ -625,11 +697,199 @@ def cmd_status(args):
                       "problems": [bad[0]] if bad else [], "detail": {}}))
 
 
-def cmd_doctor(args):
+# ── validate and doctor ───────────────────────────────────────────────────────────────────────────
+
+def _text(msg):
+    return "".join(c for c in str(msg) if c.isprintable())[:300]
+
+
+def run_validate(module=None):
+    """(errors, warnings) as `[{id, message}]`: the core's own validator for each installed module, and the node keys'
+    current values against the core's schema. Messages name a key and a rule, never a value."""
+    errors, warnings = [], []
+    mods = sorted(m["name"] for m in core("hive-mind", "module", "list", "--json").get("modules", [])
+                  if MODULE_NAME.match(str(m.get("name", ""))) and m.get("config_schema"))
+    if module is not None:
+        if module not in {m["name"] for m in core("hive-mind", "module", "list", "--json").get("modules", [])}:
+            raise Refused("not-installed", f"no module {module!r} is installed", "hive-mind module list shows what is installed",
+                          f"x-{module}")
+        mods = [module] if module in mods else []
+    for name in mods:
+        res = core("hive-mind", "module", "config", name, "validate", "--json")
+        errors += [{"id": f"x-{name}", "message": _text(m)} for m in res.get("errors", [])]
+        warnings += [{"id": f"x-{name}", "message": _text(m)} for m in res.get("warnings", [])]
+    if module is None:
+        reg = Registry("node:")
+        for rec in reg.select("node:"):
+            if rec["source"] != "node" or rec["value"] is None:
+                continue
+            text = ",".join(rec["value"]) if isinstance(rec["value"], list) else str(rec["value"])
+            try:
+                validate(rec, text)
+            except Refused as e:
+                errors.append({"id": rec["id"], "message": _text(e.message.split(": ", 1)[-1])})
+    return errors, warnings
+
+
+def cmd_validate(args):
+    errors, warnings = run_validate(args.module)
+    ok = not errors
+    if args.json:
+        print(json.dumps({"schema": SCHEMA, "ok": ok, "errors": errors, "warnings": warnings}, indent=2))
+    else:
+        for e in errors:
+            print(f"error: {e['id']}: {e['message']}")
+        for w in warnings:
+            print(f"warning: {w['id']}: {w['message']}")
+        if ok and not warnings:
+            print("ok")
+    return 0 if ok else 1
+
+
+def _mode(path):
+    try:
+        return stat.S_IMODE(os.lstat(path).st_mode)
+    except OSError:
+        return None
+
+
+def _in_range(rec):
+    """False when a governed value is outside what the core's table accepts now (an entry from an older table)."""
+    v = rec["value"]
+    if v is None or rec["source"] in (None, "default"):
+        return True
+    if "values" in rec and v not in rec["values"]:
+        return False
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return not (("min" in rec and v < rec["min"]) or ("max" in rec and v > rec["max"]))
+    return True
+
+
+def _agent_socket_row(row):
+    """The owner agent's socket lives under one of two directories. If it is in the one this process would not look in,
+    every governed write from here says `owner-locked` while the agent is unlocked."""
+    h = hashlib.sha256(os.path.realpath(hive_home()).encode()).hexdigest()[:12]
+    name = f"owner-agent-{h}.sock"
+    mine, other = agent_dirs()
+    if other is None:
+        xdg = os.environ.get("XDG_RUNTIME_DIR")          # XDG is unset here: the other place to look is a runtime dir
+        cands = [os.path.join(f"/run/user/{os.getuid()}", "hive-mind")]
+        other = cands[0] if xdg is None else None
+    if os.path.exists(os.path.join(mine, name)) or other is None or not os.path.exists(os.path.join(other, name)):
+        row("ok", "agent-socket-dir", f"the owner agent's socket, if there is one, is where this process looks ({mine})")
+    else:
+        row("warn", "agent-socket-dir", f"the owner agent's socket is in {other}, not in {mine}, where this process looks",
+            "run hconfig with the same XDG_RUNTIME_DIR as the terminal that ran `hive-mind owner unlock`")
+
+
+def _key_dir_row(row):
+    env = os.environ.get("HIVE_KEY_DIR")
+    pointer = os.path.join(hive_home(), ".key-dir")
+    try:
+        with open(pointer) as f:
+            recorded = f.read().strip()
+    except OSError:
+        recorded = None
+    if env and (recorded is None or os.path.realpath(env) != os.path.realpath(recorded)):
+        row("warn", "key-dir", "HIVE_KEY_DIR is set and a child without it would resolve a different key directory"
+            if recorded else "HIVE_KEY_DIR is set and the hive has no .key-dir file: a child without it would resolve "
+            "a different key directory", "set HIVE_KEY_DIR in every shell and unit that runs hconfig, or remove it")
+    else:
+        row("ok", "key-dir", "the key directory is the same with or without HIVE_KEY_DIR")
+
+
+def _systemd_started(unit="hive-sync"):
+    exe = shutil.which("systemctl")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "--user", "show", unit, "--property=ActiveEnterTimestamp", "--value"],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5, env=_child_env())
+        out = r.stdout.strip()
+        if r.returncode != 0 or not out:
+            return None
+        d = subprocess.run(["date", "-d", out, "+%s"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        return float(d.stdout.strip()) if d.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _last_audit_ts():
+    try:
+        with open(os.path.join(hive_home(), "hconfig", "audit.jsonl")) as f:
+            lines = f.read().splitlines()
+        return calendar.timegm(time.strptime(json.loads(lines[-1])["ts"], "%Y-%m-%dT%H:%M:%SZ")) if lines else None
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+
+
+def run_doctor():
+    results = []
+
+    def row(level, check, message, hint=None):
+        r = {"level": level, "check": check, "message": _text(message)}
+        if hint:
+            r["fix_hint"] = _text(hint)
+        results.append(r)
+
     bad = _core_problem()
-    res = {"level": "warn", "check": "core-verbs", "message": bad[0], "fix_hint": bad[1]} if bad else \
-        {"level": "ok", "check": "core-verbs", "message": "the core's config verbs answer"}
-    print(json.dumps({"schema": 1, "results": [res]}))
+    if bad:
+        row("warn", "core-verbs", bad[0], bad[1])
+        return results
+    row("ok", "core-verbs", "the core's config verbs answer")
+    reg = Registry("")
+    errors, warnings = run_validate()
+    for e in errors:
+        row("warn", "config-invalid", f"{e['id']}: {e['message']}", "hconfig validate shows the same findings")
+    for w in warnings:
+        row("warn", "config-unknown-key" if "not in the schema" in w["message"] else "config-warning",
+            f"{w['id']}: {w['message']}", "hconfig validate shows the same findings")
+    if not errors and not warnings:
+        row("ok", "config", "every module's config and the node keys validate")
+    shadow = [r for r in reg.records if r["class"] == "node" and r["source"] == "env"]
+    for r in shadow:
+        row("warn", "env-override", f"{r['id']} is overridden by {r['env']}, which beats the node file",
+            f"unset {r['env']} to use the file's value")
+    if not shadow:
+        row("ok", "env-override", "no node key is overridden by the environment")
+    old = [r["id"] for r in reg.records if r["id"].startswith("core:") and not _in_range(r)]
+    for i in old:
+        row("warn", "governed-range", f"{i} holds a value the core's table no longer accepts (an old entry)",
+            "the owner can set it again with hive-mind config set")
+    if not old:
+        row("ok", "governed-range", "every governed value is inside the core's table")
+    _key_dir_row(row)
+    _agent_socket_row(row)
+    state = os.path.join(hive_home(), "hconfig")
+    bad_modes = [(p, m) for p, want in ((state, 0o700), (os.path.join(state, "audit.jsonl"), 0o600)) if os.path.exists(p)
+                 for m in [_mode(p)] if m is not None and m != want]
+    for p, m in bad_modes:
+        row("warn", "audit-file", f"{os.path.basename(p)} has mode {m:04o}", f"chmod {'700' if p == state else '600'} {p}")
+    if not bad_modes:
+        row("ok", "audit-file", "the audit directory and file are private")
+    peers = os.path.join(hive_home(), ".peers.json")
+    try:
+        mtime = os.stat(peers).st_mtime
+    except OSError:
+        mtime = None
+    last = _last_audit_ts()
+    if mtime is not None and last is not None and mtime > last + 5:
+        row("warn", "node-file-audit-gap", "the node file changed after hconfig's last audit line: it was edited directly",
+            "changes made with a core verb are not in the audit file")
+    else:
+        row("ok", "node-file-audit-gap", "no node-file change outside hconfig is known")
+    started = _systemd_started()
+    if mtime is not None and started is not None and mtime > started + 1:
+        row("warn", "peers-reread", "the sync daemon has not restarted since the node file changed",
+            "systemctl --user restart hive-sync")
+    else:
+        row("ok", "peers-reread", "the sync daemon has seen the node file as it is, or its start time is unknown")
+    return results[:100]
+
+
+def cmd_doctor(args):
+    print(json.dumps({"schema": 1, "results": run_doctor()}))
+    return 0
 
 
 def _write_verb(action):
@@ -645,7 +905,7 @@ def _write_verb(action):
             else:
                 raise UsageError("set needs a value, or --stdin")
         rec, changed, note = do_write(args, action, value)
-        payload = {"id": rec["id"], "action": action, "changed": changed, "key": rec}
+        payload = {"id": rec["id"], "action": action, "changed": changed, "key": rec, "warnings": rec["warnings"]}
         if note:
             payload["note"] = note
         verb = "unset" if action == "unset" else "set"
@@ -684,11 +944,15 @@ def parser():
     p.add_argument("id")
     p.add_argument("value", nargs="?", help="the value (a secret is never taken here: use --stdin)")
     p.add_argument("--stdin", action="store_true", help="read the value, one line, from standard input")
+    p.add_argument("--device", help="a fleet-node key: the device (k1:<16 hex>) to set it for; default this device")
     p.add_argument("--non-interactive", action="store_true", help="never prompt (hconfig never does; accepted for hdash)")
     p.set_defaults(fn=_write_verb("set"))
     p = sub.add_parser("unset", parents=[common], help="remove a node-scope module key's value")
     p.add_argument("id")
-    p.set_defaults(fn=_write_verb("unset"), stdin=False, value=None)
+    p.set_defaults(fn=_write_verb("unset"), stdin=False, value=None, device=None)
+    p = sub.add_parser("validate", parents=[common], help="the core's validators over every module and the node keys")
+    p.add_argument("module", nargs="?")
+    p.set_defaults(fn=cmd_validate)
     for name, fn in (("status", cmd_status), ("doctor", cmd_doctor)):
         p = sub.add_parser(name, parents=[common], help=f"the module contract's {name} answer, JSON")
         p.set_defaults(fn=fn)
@@ -701,14 +965,13 @@ def main(argv=None):
     ap = parser()
     args = ap.parse_args(argv)
     try:
-        args.fn(args)
+        return args.fn(args) or 0
     except UsageError as e:
         ap.error(str(e))
     except Refused as e:
         return refuse(args, e)
     except BrokenPipeError:
         return 0
-    return 0
 
 
 if __name__ == "__main__":
