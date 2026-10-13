@@ -21,6 +21,8 @@ The release is not signed yet: no publisher key exists for this repository, so t
 
 ## Use
 
+The full command and JSON reference, the one a dashboard is written against, is [docs/CLI.md](docs/CLI.md).
+
 ```
 hconfig schema [PREFIX] [--json]                          every known key and its schema, without values
 hconfig list [PREFIX] [--class node|module|governed] [--json]
@@ -30,7 +32,8 @@ hconfig set ID [VALUE] [--stdin] [--device ID] [--non-interactive] [--json]
 hconfig unset ID [--json]
 hconfig validate [MODULE] [--json]
 hconfig version
-hconfig status | doctor --json                              the module contract's answers (doctor: the configuration checks below)
+hconfig status --json                                       the module contract's status answer
+hconfig doctor --json                                       the module contract's doctor answer, with the configuration checks below
 ```
 
 A key is spelled the way the journal spells it:
