@@ -54,6 +54,27 @@ def test_a_fleet_set_runs_the_core_verb_non_interactively_and_is_audited(stub):
     assert (line["id"], line["class"], line["old"], line["new"], line["ok"]) == ("x-alpha:limit", "governed", None, "8", True)
 
 
+@pytest.mark.parametrize("scope, layer, extra", (("fleet", "--fleet", ()), ("fleet-node", f"--fleet-node {DEV_A}", ("--device", DEV_A))))
+def test_a_secret_fleet_key_reaches_the_core_on_stdin_and_nowhere_else(tmp_path, scope, layer, extra):
+    secret = "fleet-secret-value-31"
+
+    def mutate(a):
+        sch = dict(stubcore.ALPHA_SCHEMA, **{"vault": {"type": "string", "scope": scope, "description": "v", "secret": True}})
+        a["hive-mind module config alpha schema --json"] = {"out": sch}
+        a["hive-mind module config alpha list --json"] = {"out": stubcore.ALPHA_ROWS + [
+            {"key": "vault", "value": "********", "source": "default", "secret": True, "set": False}]}
+        a[f"hive-mind module config --non-interactive {layer} --stdin -- alpha set vault"] = {
+            "out": f"alpha: set vault ({scope})\n"}
+    env, calls = stub_with(tmp_path, mutate)
+    r = run("set", "x-alpha:vault", "--stdin", "--json", *extra, env=env, stdin=secret + "\n")
+    assert r.returncode == 0 and secret not in r.stdout + r.stderr, (r.stdout, r.stderr)
+    w = writes(calls)
+    assert len(w) == 1 and w[0]["stdin"] == secret + "\n"
+    assert all(secret not in " ".join(c["argv"]) for c in calls())
+    assert all(secret not in json.dumps(c["env"]) for c in calls())
+    assert secret not in (tmp_path / "hive" / "hconfig" / "audit.jsonl").read_text()
+
+
 def test_a_fleet_set_to_the_schema_default_is_signed_and_one_equal_to_the_journal_value_is_not(stub, tmp_path):
     (env, calls), _ = stub
     assert json.loads(run("set", "x-alpha:limit", "5", "--json", env=env).stdout)["changed"] is True     # source default: signed

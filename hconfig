@@ -513,8 +513,12 @@ def _run_write(rec, action, value, device=None):
         mod = rec["id"][2:].split(":", 1)[0]
         if rec["class"] == "governed":          # signed: the core signs through the agent or refuses with exit 5
             layer = ["--fleet"] if rec["scope"] == "fleet" else ["--fleet-node", device]
-            rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", *layer, "--", mod, "set", key,
-                                    value)
+            if rec["secret"]:                   # a secret goes to the core on stdin and is never in any argv
+                rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", *layer, "--stdin", "--", mod,
+                                        "set", key, stdin_text=value + "\n")
+            else:
+                rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", *layer, "--", mod, "set",
+                                        key, value)
             if rc == 5:
                 raise _owner_locked(rec, mod)
             if rc == 0 and ("nothing signed" in out or "nothing changed" in out):
