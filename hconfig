@@ -419,7 +419,10 @@ def validate(rec, text):
     if kind == "int":
         if not INT_TEXT.match(text.strip() if rec["class"] == "node" else text):
             raise bad("not a whole number")
-        n = int(text)
+        try:
+            n = int(text.strip())
+        except ValueError:
+            raise bad("not a whole number") from None
         if ("min" in rec and n < rec["min"]) or ("max" in rec and n > rec["max"]):
             raise bad(f"outside {rec.get('min', '-inf')}..{rec.get('max', 'inf')}")
         return n if rec["class"] == "node" else text
@@ -475,6 +478,8 @@ def _run_write(rec, action, value):
         note = None
     if rc != 0:
         raise Refused("core-failed", _core_error(rc, out, err), "run the core verb by hand to see more", rec["id"])
+    if rec["class"] != "node" and "nothing changed" in out:
+        return False, None                     # the core compared the node layer itself and wrote nothing
     return True, note
 
 
@@ -513,12 +518,15 @@ def do_write(args, action, value):
         old = rec["value"] if in_layer else None
         log = audit_open()
         try:
-            _, note = _run_write(rec, action, value)
+            changed, note = _run_write(rec, action, value)
         except Refused as e:
             audit_write(log, rec, action, False, e.code, old, value)
             raise
-        audit_write(log, rec, action, True, None, old, None if action == "unset" else canon)
-    return _resolve(Registry(args.id), args.id), True, note
+        if changed:
+            audit_write(log, rec, action, True, None, old, None if action == "unset" else canon)
+        else:
+            os.close(log)                      # nothing was written, so there is nothing to record
+    return _resolve(Registry(args.id), args.id), changed, note
 
 
 # ── output ────────────────────────────────────────────────────────────────────────────────────────

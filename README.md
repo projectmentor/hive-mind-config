@@ -71,6 +71,9 @@ is written in this release: a `core:` key, a module's `fleet` or `fleet-node` ke
   Give it with `--stdin` (one line); it reaches the core on stdin too, so it is in no process's argument list.
 - A write compares the layer it writes: a `node:` or module-node value equal to the current *node-layer* value is a
   no-op (`changed: false`, nothing runs); a value equal only to the default or to another layer is still written.
+- A node-scope module key set to its own schema default is not stored: the core compares the merged node layer and
+  reports it as already set, so `changed` is `false` and nothing is audited (the same for a secret submitted again with the
+  value it holds). Persisting an explicit pin equal to the default needs a core change.
 - Refusals, each exit 1 with nothing changed: `unknown-key`, `not-installed`, `validation`, `secret-on-argv`,
   `read-only` (a `node:` key cannot be unset: the core has no verb for it), `env-overridden` (the key is shadowed by an
   environment variable; hconfig never writes an environment), `owner-only`, `core-failed` (the core verb's exit and one

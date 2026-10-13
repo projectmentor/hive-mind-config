@@ -29,6 +29,7 @@ def answers_with_writes():
     a["hv config node set --json -- dashboard_share *"] = {"out": {"schema": 1, "ok": True}}
     a["hive-mind module config --non-interactive -- alpha set greeting *"] = {"out": "alpha: set greeting\n"}
     a["hive-mind module config --non-interactive -- alpha set mode *"] = {"out": "alpha: set mode\n"}
+    a["hive-mind module config --non-interactive -- alpha set limit *"] = {"out": "alpha: set limit\n"}
     a["hive-mind module config alpha set token --stdin --non-interactive"] = {"out": "alpha: set token\n"}
     a["hive-mind module config alpha unset greeting"] = {"out": "alpha: unset greeting\n"}
     return a
@@ -164,10 +165,33 @@ def test_a_node_write_compares_the_node_layer_not_the_merged_value(stub):
     r = run("set", "x-alpha:greeting", "yo", "--json", env=env)
     out = json.loads(r.stdout)
     assert r.returncode == 0 and out["changed"] is False and len(writes(calls)) == 2
-    # `x-alpha:mode` is `a` only by default: writing `a` writes the node layer.
-    r = run("set", "x-alpha:mode", "a", "--json", env=env)
+    # `x-alpha:mode` is `a` only by default. hconfig runs the core verb (the node file has no entry); the real core
+    # compares the merged node layer and stores nothing, which hconfig reports as unchanged (next test).
+    r = run("set", "x-alpha:mode", "b", "--json", env=env)
     assert json.loads(r.stdout)["changed"] is True and len(writes(calls)) == 3
     assert [l["id"] for l in audit_lines(state)] == ["node:port", "node:dashboard_share", "x-alpha:mode"]   # no-op: no line
+
+
+def test_when_the_core_stores_nothing_the_result_is_unchanged_and_not_audited(tmp_path):
+    """`module config set` compares the merged node layer: a key set to its schema default (or a secret submitted again
+    with the value it holds) is 'already set: nothing changed' and exit 0. hconfig must not report that as a write."""
+    a = answers_with_writes()
+    a["hive-mind module config --non-interactive -- alpha set mode *"] = {"out": "alpha: mode is already set: nothing changed\n"}
+    a["hive-mind module config alpha set token --stdin --non-interactive"] = {"out": "alpha: token is already set: nothing changed\n"}
+    env, calls = stubcore.install(tmp_path, a, HIVE_HOME=str(tmp_path / "hive"))
+    for argv, stdin in ((("set", "x-alpha:mode", "a", "--json"), None), (("set", "x-alpha:token", "--stdin", "--json"), "same\n")):
+        r = run(*argv, env=env, stdin=stdin)
+        assert r.returncode == 0 and json.loads(r.stdout)["changed"] is False, argv
+    assert len(writes(calls)) == 2 and audit_lines(tmp_path / "hive") == []
+
+
+def test_a_unicode_space_around_an_int_is_a_validation_refusal_not_a_traceback(stub):
+    (env, calls), _ = stub
+    for text in ("\u00a09001", "9001\u2003", "\u30009001", "9\u00a0001"):
+        r = run("set", "node:port", text, "--json", env=env)
+        assert "Traceback" not in r.stderr, text
+        assert r.returncode in (0, 1)
+    assert all("Traceback" not in run("set", "node:port", t, env=env).stderr for t in ("\u00a0", "\u0661\u0662"))
 
 
 def test_a_concrete_key_under_a_node_scope_template_can_be_set_before_it_exists(tmp_path):
@@ -249,6 +273,24 @@ def test_the_audit_line_has_the_documented_fields_and_the_caller_source(stub):
 
 
 # ── against the real core ─────────────────────────────────────────────────────────────────────────
+
+def test_a_default_valued_module_key_and_a_repeated_secret_store_nothing_through_the_real_core(whive):
+    node_cfg = whive.home / "modules" / "beta" / "config"
+    code, out = whive.json("set", "x-beta:mode", "a", check=0)               # the schema default, not in the node file
+    assert out["changed"] is False and out["key"]["source"] == "default"
+    assert not node_cfg.exists() or "mode" not in json.loads(node_cfg.read_text())
+    audit = whive.home / "hive" / "hconfig" / "audit.jsonl"
+    seen = [json.loads(l)["id"] for l in audit.read_text().splitlines()] if audit.exists() else []
+    assert "x-beta:mode" not in seen
+    code, out = whive.json("set", "x-beta:mode", "b", check=0)
+    assert out["changed"] is True and out["key"]["source"] == "node"
+    for n, want in ((1, True), (2, False)):
+        r = subprocess.run([sys.executable, "-I", str(HCONFIG), "set", "x-alpha:token", "--stdin", "--json"],
+                           env=whive.hconfig_env(), capture_output=True, text=True, input="repeat-me-55\n")
+        assert r.returncode == 0 and json.loads(r.stdout)["changed"] is want, n
+    ids = [json.loads(l)["id"] for l in audit.read_text().splitlines()]
+    assert ids.count("x-alpha:token") == 1 and ids.count("x-beta:mode") == 1
+
 
 def test_set_and_unset_a_module_key_through_the_real_core(whive):
     code, out = whive.json("set", "x-alpha:greeting", "hello", check=0)
