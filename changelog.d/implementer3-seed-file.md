@@ -1,0 +1,1 @@
+- `scripts/sign_manifest.py --seed-file PATH`: read the publisher seed from a 0600 file you own (not a symlink, no group or other access) instead of the environment, so it never enters shell history or a process environment; the file and the environment variable together are refused (hive-mind-config#7).

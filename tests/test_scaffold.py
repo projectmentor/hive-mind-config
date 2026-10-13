@@ -102,7 +102,7 @@ def test_signing_needs_the_seed_in_the_environment(core_dir, module_copy):
     r = sign_py(module_copy, core_dir)
     assert r.returncode == 1 and "HCONFIG_PUBLISHER_SEED" in r.stderr
     text = SIGN.read_text()
-    assert 'os.environ.get("HCONFIG_PUBLISHER_SEED"' in text and "--seed" not in text
+    assert 'os.environ.get(ENV_NAME' in text and 'ENV_NAME = "HCONFIG_PUBLISHER_SEED"' in text and "\"--seed\"" not in text
 
 
 def test_a_bad_signature_fails_even_when_unsigned_is_tolerated(core_dir, module_copy):
