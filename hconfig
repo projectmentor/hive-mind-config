@@ -5,24 +5,31 @@
     hconfig list [PREFIX] [--class node|module|governed] [--json]
     hconfig get ID [--json]                   one record
     hconfig explain ID [--json]               the record and what its value means for this hive
+    hconfig set ID [VALUE] [--stdin] [--non-interactive] [--json]    node: keys and node-scope module keys
+    hconfig unset ID [--json]                                         node-scope module keys
     hconfig status --json | doctor --json     the module contract's status and doctor answers (the core's verbs reachable)
     hconfig version
 
 The classes are `node:<key>` (the node files), `x-<module>:<key>` with scope `node` (module class) and `core:<key>` or
 `x-<module>:<key>` with scope `fleet` or `fleet-node` (governed). Every value is the core's answer: this program runs
 `hv config schema|show|node list --json` and `hive-mind module list --json` and `module config <name> schema|list --json`
-as subprocesses and merges nothing itself. It holds no key, reads no passphrase, opens no socket and writes nothing.
-Secrets print as `********` and a refusal never carries a value. Exit codes: 0 ok, 1 refused (nothing changed), 2 usage.
+as subprocesses and merges nothing itself. It holds no key, reads no passphrase and opens no socket. `set` and `unset` write
+only through the core's own verbs (`hv config node set`, `hive-mind module config <name> set|unset`), validate before
+they start one, serialize on one lock, and append a line to a local audit file. Secrets print as `********`, are accepted
+only on stdin, and a refusal never carries a value. Exit codes: 0 ok, 1 refused (nothing changed), 2 usage.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import time
 
 VERSION = "0.1.0-dev"
 SCHEMA = 1
@@ -66,24 +73,37 @@ def _safe_line(text):
     return ""
 
 
-def core(which, *args):
-    """Run one read verb of the core and return its JSON. Never interactive: stdin is closed, the owner variables gone."""
+def _child_env():
+    return {k: v for k, v in os.environ.items() if k not in OWNER_ENV}
+
+
+def core_run(which, *args, stdin_text=None):
+    """Run one core verb: (returncode, stdout, stderr). stdin is closed unless `stdin_text` is given (a secret goes
+    this way and never on argv). Never interactive; the owner variables are gone from the child's environment."""
     argv = _program(which) + list(args)
-    env = {k: v for k, v in os.environ.items() if k not in OWNER_ENV}
     try:
-        r = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env, timeout=CORE_TIMEOUT)
+        r = subprocess.run(argv, input=stdin_text, stdin=None if stdin_text is not None else subprocess.DEVNULL,
+                           capture_output=True, text=True, env=_child_env(), timeout=CORE_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as e:
         raise Refused("core-failed", f"`{which} {' '.join(args[:3])}` did not run: {type(e).__name__}") from None
-    verb = f"{which} {' '.join(a for a in args if a != '--json')}"
-    if r.returncode != 0:
-        tail = _safe_line(r.stderr)
-        raise Refused("core-failed", f"`{verb}` exited {r.returncode}" + (f": {tail}" if tail else ""),
-                      "this core may predate the 4.0 config verbs" if r.returncode == 2
-                      else "run it by hand to see the full message")
+    return r.returncode, r.stdout, r.stderr
+
+
+def _verb(which, args):
+    return f"{which} {' '.join(a for a in args if a != '--json')[:60]}"
+
+
+def core(which, *args):
+    """Run one read verb of the core and return its JSON."""
+    rc, out, err = core_run(which, *args)
+    if rc != 0:
+        tail = _safe_line(err)
+        raise Refused("core-failed", f"`{_verb(which, args)}` exited {rc}" + (f": {tail}" if tail else ""),
+                      "this core may predate the 4.0 config verbs" if rc == 2 else "run it by hand to see the full message")
     try:
-        return json.loads(r.stdout)
+        return json.loads(out)
     except ValueError:
-        raise Refused("core-failed", f"`{verb}` did not print JSON", "is the core 4.0 or newer?") from None
+        raise Refused("core-failed", f"`{_verb(which, args)}` did not print JSON", "is the core 4.0 or newer?") from None
 
 
 # ── records ───────────────────────────────────────────────────────────────────────────────────────
@@ -242,6 +262,23 @@ class Registry:
         raise Refused("unknown-key", f"no such key: {id_}", "hconfig schema lists every key", id_)
 
 
+def _resolve(reg, id_):
+    """The record for `id_`, or, for a concrete key that matches a template and is not set yet, a record built from it."""
+    try:
+        return reg.get(id_)
+    except Refused as e:
+        if e.code != "unknown-key" or not id_.startswith("x-") or ":" not in id_:
+            raise
+        mod, _, key = id_[2:].partition(":")
+        for t in reg.records:
+            if t.get("template") and t["id"].startswith(f"x-{mod}:") and _template_matches(t["id"].split(":", 1)[1], key):
+                inst = json.loads(json.dumps(t))
+                inst.pop("template")
+                inst.update(id=id_, instance_of=t["id"], write_via=_write_via(mod, key, t["scope"], t["secret"]))
+                return inst
+        raise
+
+
 def schema_view(rec):
     """A record without its value: what `hconfig schema` prints."""
     return {k: v for k, v in rec.items() if k not in ("value", "source", "set", "set_by")}
@@ -272,6 +309,216 @@ def derive(rec, governance):
     for w in rec["warnings"]:
         out.append({"code": "identifying", "text": w})
     return out
+
+
+# ── writes ────────────────────────────────────────────────────────────────────────────────────────
+
+VALUE_MAX = 4096
+INT_TEXT = re.compile(r"-?[0-9]{1,18}\Z")
+SOURCE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,31}\Z")
+LOCK_WAIT = 30
+# Node-file keys the core owns but gates on the owner's public key: read-only here, with the command to run by hand.
+OWNER_ONLY_NODE = {"owner_quota": "hive-mind module quota <module> --per-hour <n> --per-day <n>"}
+
+
+def hive_home():
+    return os.path.abspath(os.environ.get("HIVE_HOME") or os.path.expanduser("~/projects/hive-mind"))
+
+
+def _state_dir():
+    """`$HIVE_HOME/hconfig/`: ours, 0700, never a symlink."""
+    path = os.path.join(hive_home(), "hconfig")
+    os.makedirs(hive_home(), exist_ok=True)
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise Refused("read-only", "the hconfig state directory is not a directory of this user",
+                      "remove it or fix its owner; hconfig will not write into it")
+    if st.st_mode & 0o077:
+        os.chmod(path, 0o700)
+    return path
+
+
+def _open_private(path, flags):
+    """Open (creating 0600) a file of ours: no symlink followed, nothing that is not a regular file of this user."""
+    try:
+        fd = os.open(path, flags | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        raise Refused("read-only", f"an hconfig state file cannot be opened ({e.strerror})", "remove it") from None
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        os.close(fd)
+        raise Refused("read-only", "an hconfig state file is not a regular file of this user", "remove it")
+    if st.st_mode & 0o077:
+        os.fchmod(fd, 0o600)
+    return fd
+
+
+class Locked:
+    """One exclusive `flock` under the state directory: two writes (two dashboard requests) never interleave."""
+
+    def __enter__(self):
+        self.fd = _open_private(os.path.join(_state_dir(), "lock"), os.O_RDWR)
+        deadline = time.monotonic() + LOCK_WAIT
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    os.close(self.fd)
+                    raise Refused("core-failed", "another hconfig write holds the lock", "try again") from None
+                time.sleep(0.02)
+
+    def __exit__(self, *exc):
+        os.close(self.fd)                      # closing releases the flock
+
+
+def audit_open():
+    """The audit file, opened (and checked) before a write starts, so a refusal here means nothing has changed."""
+    return _open_private(os.path.join(_state_dir(), "audit.jsonl"), os.O_WRONLY | os.O_APPEND)
+
+
+def audit_write(fd, rec, action, ok, code=None, old=None, new=None):
+    """One line per write hconfig performs: a local convenience record, not evidence (any process of this user can
+    edit it). Never a value for a secret."""
+    who = os.environ.get("HCONFIG_SOURCE", "cli")
+    line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "id": rec["id"], "class": rec["class"],
+            "action": action, "source": who if SOURCE_NAME.match(who) else "other", "uid": os.getuid(),
+            "pid": os.getpid(), "ok": ok, "error": {"code": code} if code else None}
+    if not rec["secret"]:
+        line.update(old=old, new=new)
+    try:
+        os.write(fd, (json.dumps(line) + "\n").encode())
+    finally:
+        os.close(fd)
+
+
+def _parse_list(text):
+    try:
+        val = json.loads(text) if text.lstrip().startswith("[") else [x.strip() for x in text.split(",")]
+    except ValueError:
+        val = None
+    val = [x for x in val if x != ""] if isinstance(val, list) else None
+    if val is None or not all(isinstance(x, str) and 0 < len(x) <= 256 and not any(c.isspace() for c in x) for x in val):
+        return None
+    return sorted(set(val))
+
+
+def validate(rec, text):
+    """The value the layer would hold, or a `validation` refusal. Type, enum and bounds only (the core checks the rest);
+    no message carries the value."""
+    def bad(why):
+        return Refused("validation", f"{rec['id']}: {why}", "hconfig get shows the type and range", rec["id"])
+    if len(text) > VALUE_MAX or not text.isprintable():
+        raise bad("not printable text within the value limit")
+    kind = rec["type"]
+    if kind == "int":
+        if not INT_TEXT.match(text.strip() if rec["class"] == "node" else text):
+            raise bad("not a whole number")
+        n = int(text)
+        if ("min" in rec and n < rec["min"]) or ("max" in rec and n > rec["max"]):
+            raise bad(f"outside {rec.get('min', '-inf')}..{rec.get('max', 'inf')}")
+        return n if rec["class"] == "node" else text
+    if kind == "enum":
+        val = text.strip().lower() if rec["class"] == "node" else text
+        if val not in rec["values"]:
+            raise bad("not one of " + ", ".join(rec["values"]))
+        return val
+    if kind == "bool":
+        if text not in ("true", "false"):
+            raise bad("not true or false")
+    elif kind == "list":
+        val = _parse_list(text)
+        if val is None:
+            raise bad("not a comma-separated list or a JSON list of strings without spaces")
+        return val
+    elif kind == "string" and rec["class"] != "node" and "max" in rec and len(text) > rec["max"]:
+        raise bad(f"longer than {rec['max']}")
+    return text.strip() if rec["class"] == "node" else text
+
+
+def _core_error(rc, out, err):
+    """The refusal text of a failed write verb: one safe line, never a value."""
+    line = _safe_line(err)
+    if not line:
+        try:
+            line = _safe_line(str(json.loads(out).get("error", "")))
+        except (ValueError, AttributeError):
+            line = ""
+    return f"the core refused (exit {rc})" + (f": {line}" if line else "")
+
+
+def _run_write(rec, action, value):
+    """Run the one core verb that writes `rec`'s layer. Returns (changed, note)."""
+    key = rec["id"].split(":", 1)[1]
+    if rec["class"] == "node":
+        rc, out, err = core_run("hv", "config", "node", "set", "--json", "--", key, str(value))
+        note = None
+        if rc == 0:
+            try:
+                note = json.loads(out).get("note")
+            except (ValueError, AttributeError):
+                pass
+    else:
+        mod = rec["id"][2:].split(":", 1)[0]
+        if action == "unset":
+            rc, out, err = core_run("hive-mind", "module", "config", mod, "unset", key)
+        elif rec["secret"]:                    # a secret goes to the core on stdin and is never in any argv
+            rc, out, err = core_run("hive-mind", "module", "config", mod, "set", key, "--stdin", "--non-interactive",
+                                    stdin_text=value + "\n")
+        else:
+            rc, out, err = core_run("hive-mind", "module", "config", "--non-interactive", "--", mod, "set", key, value)
+        note = None
+    if rc != 0:
+        raise Refused("core-failed", _core_error(rc, out, err), "run the core verb by hand to see more", rec["id"])
+    return True, note
+
+
+def _same(rec, canon):
+    if rec["secret"]:
+        return False                           # a masked value cannot be compared: the core decides
+    v = rec["value"]
+    return v == canon or (rec["class"] != "node" and str(v) == str(canon))
+
+
+def do_write(args, action, value):
+    """set / unset: refuse what the record says is not writable, validate, then (under one lock) compare the layer being
+    written and run the core verb. Returns (record after the write, changed, note)."""
+    if args.id.startswith("node:") and args.id[5:] in OWNER_ONLY_NODE:
+        raise Refused("owner-only", f"{args.id} is changed by the owner, not here", OWNER_ONLY_NODE[args.id[5:]], args.id)
+    rec = _resolve(Registry(args.id), args.id)
+    if rec.get("template"):
+        raise Refused("validation", f"{args.id} is a template, not a key", "name a concrete key such as "
+                      + args.id.replace("{", "<").replace("}", ">"), args.id)
+    if action == "set" and rec["secret"] and args.value is not None:
+        raise Refused("secret-on-argv", f"{args.id} is a secret and is never taken on a command line",
+                      "pass it on stdin with --stdin", args.id)
+    if rec["writable_by"] == "owner":
+        raise Refused("owner-only", f"{args.id} is changed by the owner, signed, not by hconfig 0.1", rec["write_via"], args.id)
+    if rec["class"] == "node" and action == "unset":
+        raise Refused("read-only", f"{args.id} cannot be unset: the core has no verb for it", "set it to its default", args.id)
+    if rec["class"] == "node" and rec["source"] == "env":
+        raise Refused("env-overridden", f"{rec['env']} is set in the environment and overrides {args.id}",
+                      "unset the variable; hconfig never writes an environment", args.id)
+    canon = validate(rec, value) if action == "set" else None
+    with Locked():
+        rec = _resolve(Registry(args.id), args.id)
+        in_layer = rec["source"] == "node"      # the layer being written: the node file / the module's node config
+        if (action == "set" and in_layer and _same(rec, canon)) or (action == "unset" and not in_layer):
+            return rec, False, None
+        old = rec["value"] if in_layer else None
+        log = audit_open()
+        try:
+            _, note = _run_write(rec, action, value)
+        except Refused as e:
+            audit_write(log, rec, action, False, e.code, old, value)
+            raise
+        audit_write(log, rec, action, True, None, old, None if action == "unset" else canon)
+    return _resolve(Registry(args.id), args.id), True, note
 
 
 # ── output ────────────────────────────────────────────────────────────────────────────────────────
@@ -377,6 +624,32 @@ def cmd_doctor(args):
     print(json.dumps({"schema": 1, "results": [res]}))
 
 
+def _write_verb(action):
+    def run_it(args):
+        value = None
+        if action == "set":
+            if args.stdin and args.value is not None:
+                raise UsageError("give the value or --stdin, not both")
+            if args.stdin:
+                value = sys.stdin.readline().rstrip("\r\n")
+            elif args.value is not None:
+                value = args.value
+            else:
+                raise UsageError("set needs a value, or --stdin")
+        rec, changed, note = do_write(args, action, value)
+        payload = {"id": rec["id"], "action": action, "changed": changed, "key": rec}
+        if note:
+            payload["note"] = note
+        verb = "unset" if action == "unset" else "set"
+        emit(args, payload, f"{verb} {rec['id']}" + ("" if changed else " (nothing to change)")
+             + (f"\n  {note}" if note else ""))
+    return run_it
+
+
+class UsageError(Exception):
+    pass
+
+
 def cmd_version(args):
     print(f"hconfig {VERSION}")
 
@@ -399,6 +672,15 @@ def parser():
     p = sub.add_parser("explain", parents=[common], help="one record and what its value means for this hive")
     p.add_argument("id")
     p.set_defaults(fn=cmd_explain)
+    p = sub.add_parser("set", parents=[common], help="set a node: key or a node-scope module key")
+    p.add_argument("id")
+    p.add_argument("value", nargs="?", help="the value (a secret is never taken here: use --stdin)")
+    p.add_argument("--stdin", action="store_true", help="read the value, one line, from standard input")
+    p.add_argument("--non-interactive", action="store_true", help="never prompt (hconfig never does; accepted for hdash)")
+    p.set_defaults(fn=_write_verb("set"))
+    p = sub.add_parser("unset", parents=[common], help="remove a node-scope module key's value")
+    p.add_argument("id")
+    p.set_defaults(fn=_write_verb("unset"), stdin=False, value=None)
     for name, fn in (("status", cmd_status), ("doctor", cmd_doctor)):
         p = sub.add_parser(name, parents=[common], help=f"the module contract's {name} answer, JSON")
         p.set_defaults(fn=fn)
@@ -408,9 +690,12 @@ def parser():
 
 
 def main(argv=None):
-    args = parser().parse_args(argv)
+    ap = parser()
+    args = ap.parse_args(argv)
     try:
         args.fn(args)
+    except UsageError as e:
+        ap.error(str(e))
     except Refused as e:
         return refuse(args, e)
     except BrokenPipeError:

@@ -130,11 +130,7 @@ class Hive:
         return r.returncode, json.loads(r.stdout)
 
 
-@pytest.fixture(scope="session")
-def hive(core_dir, tmp_path_factory):
-    """A decoy hive: owner and one admitted device, modules `alpha` and `beta` installed, one governed core entry, a
-    fleet value, a fleet-node instance of a template, a node value and a secret."""
-    root = tmp_path_factory.mktemp("decoy")
+def build_hive(core_dir, root):
     h = Hive(core_dir, root)
     h.core_run("config", "identity", "init")
     h.core_run("owner", "init")
@@ -153,3 +149,16 @@ def hive(core_dir, tmp_path_factory):
     h.core_run("config", "node", "set", "port", "9999")
     h.device = device
     return h
+
+
+@pytest.fixture(scope="session")
+def hive(core_dir, tmp_path_factory):
+    """A decoy hive: owner and one admitted device, modules `alpha` and `beta` installed, one governed core entry, a
+    fleet value, a fleet-node instance of a template, a node value and a secret. Read-only: no test writes to it."""
+    return build_hive(core_dir, tmp_path_factory.mktemp("decoy"))
+
+
+@pytest.fixture(scope="session")
+def whive(core_dir, tmp_path_factory):
+    """The same hive, for the tests that write. Each test uses keys of its own, so order does not matter."""
+    return build_hive(core_dir, tmp_path_factory.mktemp("decoy-w"))

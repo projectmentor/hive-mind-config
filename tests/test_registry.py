@@ -218,7 +218,7 @@ def test_refusals_are_typed_exit_one_and_say_nothing_changed(hive):
 
 
 def test_usage_errors_exit_two(hive):
-    for argv in ((), ("bogus",), ("get",), ("list", "--class", "nope"), ("set", "node:port", "1"), ("unset", "node:port")):
+    for argv in ((), ("bogus",), ("get",), ("list", "--class", "nope"), ("set",), ("unset",)):
         assert hive.hconfig(*argv).returncode == 2, argv
 
 
@@ -320,9 +320,9 @@ def test_hconfig_writes_nothing_to_the_hive(hive):
     assert snap() == before
 
 
-def test_the_program_has_no_write_or_listen_path():
+def test_the_program_has_no_listen_or_prompt_path():
     src = HCONFIG.read_text()
-    for needle in ("import socket", "getpass", "open(", ".write_text"):
+    for needle in ("import socket", "getpass", "HIVE_OWNER_KEY_PASSPHRASE\"]", "input("):
         assert needle not in src, needle
     assert run("version", env={"PATH": os.environ["PATH"]}).stdout.strip() == "hconfig 0.1.0-dev"
 
