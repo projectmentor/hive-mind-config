@@ -13,7 +13,7 @@
   "--json"
  ],
  "files": {
-  ".github/workflows/ci.yml": "27dace2bfca6a9f2368f7635e72414e67fa80937418c62cde0a4c4d23b5cf115",
+  ".github/workflows/ci.yml": "ddbabe29d7e862ce89838847884bece9c8cbf67283f9ac71347384175132e66e",
   ".gitignore": "f6b228e652a56584f0c298fb331d5569c101b5705d3b9563412aa2c390e9726e",
   "LICENSE": "ba29e3936c3d0e11aea8de16b1b66fded1558185d618f88de81d975fa4df5e98",
   "README.md": "8c2e03268e9391757578dfa38b1587ed7c3836015a6214607713d9e90f69bc40",
