@@ -36,7 +36,7 @@ def manifest():
 
 def test_the_manifest_asks_for_what_the_design_says():
     m = manifest()
-    assert (m["name"], m["min_core"], m["contract"]) == ("hconfig", "3.1", 1)   # see sign_manifest.py: the 4.0 line still reports contract 3.1
+    assert (m["name"], m["min_core"], m["contract"]) == ("hconfig", "4.0", 1)
     assert m["cli"] == {"name": "hconfig", "command": ["hconfig"]}
     assert m["reads"] == [] and m["config_schema"] == {}
     assert m["quota"] == {"per_hour": 0, "per_day": 0}
@@ -76,15 +76,12 @@ def test_module_check_run_passes_and_the_lint_is_clean(core_dir):
     r = run(core_dir / "hivemind_ctl.py", "module", "check", REPO, "--run", "--json", isolated=False)
     out = json.loads(r.stdout)
     assert r.returncode == 0 and out["ok"], out
-    assert [w for w in out["warnings"] if "unsigned" not in w] == []     # the identifying-data lint is clean
+    assert out["warnings"] == []     # the identifying-data lint is clean
 
 
-def test_check_tolerates_only_the_unsigned_state_the_readme_describes(core_dir):
-    assert sign_py(REPO, core_dir, "--check", "--allow-unsigned").returncode == 0
-    r = sign_py(REPO, core_dir, "--check")
-    assert r.returncode == 1 and "unsigned" in r.stderr
-    assert not (REPO / "module.json.sig").exists()
-    assert "no publisher key" in (REPO / "README.md").read_text() or "No publisher key" in (REPO / "README.md").read_text()
+def test_the_committed_manifest_is_signed_and_current(core_dir):
+    assert (REPO / "module.json.sig").is_file()
+    assert sign_py(REPO, core_dir, "--check").returncode == 0
 
 
 def test_one_changed_byte_fails_check(core_dir, module_copy):

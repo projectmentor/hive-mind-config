@@ -13,17 +13,18 @@
   "--json"
  ],
  "files": {
-  ".github/workflows/ci.yml": "ddbabe29d7e862ce89838847884bece9c8cbf67283f9ac71347384175132e66e",
+  ".github/workflows/ci.yml": "69c7f56f3fe8c04e8e1a5f30408d397e6fdeb19d9fe42e8e177e77391a295c23",
   ".gitignore": "f6b228e652a56584f0c298fb331d5569c101b5705d3b9563412aa2c390e9726e",
   "LICENSE": "ba29e3936c3d0e11aea8de16b1b66fded1558185d618f88de81d975fa4df5e98",
-  "README.md": "024a6da39e6927e1491fa55925dd5d6dc6394fa89bd4efc03a2122404b8c0db4",
+  "README.md": "9bcd161769c4d00e0f45e6a17547fd722ccaa83c47e8f4796f03aef9a4bc33fd",
   "changelog.d/h1-registry-read-verbs.md": "5a74548fcb29e91f0755615f12048c7114ad3e7a0b42df5f0e01859985a2641c",
   "changelog.d/h2-set-unset.md": "d4b174171c591809bed29e3ec630d47e760e5e57e5de0392d1038a750e00fe28",
   "changelog.d/h3-governed-validate-doctor.md": "d5568a41b0f5917d40225a2d996c448c0f26fec646fde1d0cdde09c452b96ebc",
   "changelog.d/h4-docs-cli.md": "6032026634e331dc189e160081486aa644aa003a5c2729dfb49c84fad2fe00c9",
+  "changelog.d/implementer2-hconfig-first-signed-4.0.md": "92cbd7be612df554f3bf6dfb156172b090ae5ca96b62aa83fe409d275eaa14e4",
   "docs/CLI.md": "d9002293c5d8060b828635f4ee446b19552a89001bf054abb043c5515f262ab2",
   "hconfig": "ac2dc718baf5556714f0b7c91742bf2d9b8f2da1fbe5a8f08fd7b2bd037569ca",
-  "scripts/sign_manifest.py": "f2adb8d9087958d204dc0730dd1de81a53a841345e6d17eaa79df79be4619321",
+  "scripts/sign_manifest.py": "f474ca877cec5a639f41991cb4344234ecce67d20f4c890835a2e4aaf9e3239f",
   "tests/conftest.py": "1f325ce876158ba5d8b358dc779a1eb86bb27f06d6ec94a14b2272a071ae991c",
   "tests/golden/registry.json": "b8328f4d830b6bc370fe8739395cdcaf256aeb11e0efaa27b54c2420ec7734fa",
   "tests/golden/schema.json": "aed03f8bcec4b3f7e9f28b6fa2abb2b91fd01da624f2d8e05d7bf3b8699960ab",
@@ -31,12 +32,12 @@
   "tests/test_doc_sync.py": "440ea25650a1a443b57ccc01c0e76742c4903a9abc313035f86d7c364f6201e0",
   "tests/test_governed.py": "b3f10e27cda11a8743ad4666d00956eb12ff1834d6211ecd040dbf96f42557b8",
   "tests/test_registry.py": "730c225808666b8f1ffc073f6e9ff793d055729ac6e11a19a9e7117febcd0983",
-  "tests/test_scaffold.py": "22579948d1470d3e141ccab63584ce1d01803c20b52ea6bcc5dcd1c2257e9e3a",
+  "tests/test_scaffold.py": "0cae22e4cf4548d66ac7f64c3729bb92a09159a299dd88ab9dea510e550a1980",
   "tests/test_set.py": "1c643b88f64b6743fc35fe0622093e201d98b17b9290254530d2ba6f26d0e8b3"
  },
- "min_core": "3.1",
+ "min_core": "4.0",
  "name": "hconfig",
- "publisher": "7f///////////////////////////////////////38=",
+ "publisher": "dftZmZRpl8sbEk3nBuTwbsI4BvZ209M7DFeSRp8Mm1Y=",
  "quota": {
   "per_day": 0,
   "per_hour": 0

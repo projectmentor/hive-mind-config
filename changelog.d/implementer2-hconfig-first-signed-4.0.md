@@ -1,0 +1,1 @@
+- hconfig: `min_core` is `4.0`, and the manifest is signed for the first time with the hconfig publisher key (`module.json.sig`); CI now requires the signature (`--check`, no `--allow-unsigned`).
