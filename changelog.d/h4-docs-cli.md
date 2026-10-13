@@ -1,0 +1,1 @@
+- hconfig 0.1 (H4): `docs/CLI.md`, the verbs, the JSON envelope, the record, the error and exit codes as hdash's reference, with a test that every verb in it exists and every verb is in it; the README points to it.
