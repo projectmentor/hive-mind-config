@@ -354,7 +354,8 @@ def test_status_and_doctor_answer_in_the_contract_shapes(stub):
     st = json.loads(run("status", "--json", env=env).stdout)
     assert st == {"schema": 1, "state": "ok", "version": "0.1.0-dev", "problems": [], "detail": {}}
     d = json.loads(run("doctor", "--json", env=env).stdout)
-    assert d["schema"] == 1 and [r["level"] for r in d["results"]] == ["ok"]
+    assert d["schema"] == 1 and d["results"][0] == {"level": "ok", "check": "core-verbs",
+                                                    "message": "the core's config verbs answer"}
 
 
 def test_status_and_doctor_with_no_core_are_degraded_and_warn_but_exit_zero(tmp_path):

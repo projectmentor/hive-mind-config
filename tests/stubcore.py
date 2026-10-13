@@ -107,4 +107,6 @@ def standard_answers():
         "hive-mind module list --json": {"out": {"schema": 1, "modules": MODULES}},
         "hive-mind module config alpha schema --json": {"out": ALPHA_SCHEMA},
         "hive-mind module config alpha list --json": {"out": ALPHA_ROWS},
+        "hive-mind module config alpha validate --json": {"out": {"ok": True, "errors": [], "warnings": []}},
+        "hv whoami": {"out": "device: k1:0123456789abcdef\nprincipal: op\n"},
     }
