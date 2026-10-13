@@ -202,7 +202,7 @@ def _module_records(module, schema, rows):
         scope = spec.get("scope", "node")
         governed = scope != "node"
         secret, ident = bool(spec.get("secret")), bool(spec.get("identifying"))
-        kw = dict(secret=secret, identifying=ident, visibility="viewer" if governed else "operator",
+        kw = dict(secret=secret, identifying=ident, visibility="viewer" if governed and not ident and not secret else "operator",
                   writable_by="owner" if governed else "operator", write_via=_write_via(module, key, scope, secret))
         cls = "governed" if governed else "module"
         if "{" in key:
