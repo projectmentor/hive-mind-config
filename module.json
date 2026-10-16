@@ -26,7 +26,7 @@
   "docs/CLI.md": "d9002293c5d8060b828635f4ee446b19552a89001bf054abb043c5515f262ab2",
   "hconfig": "ac2dc718baf5556714f0b7c91742bf2d9b8f2da1fbe5a8f08fd7b2bd037569ca",
   "scripts/sign_manifest.py": "64706b3aaafe659d6203a63e89b59815f848928a0597bf31c8bd8cd87848df22",
-  "tests/conftest.py": "1f325ce876158ba5d8b358dc779a1eb86bb27f06d6ec94a14b2272a071ae991c",
+  "tests/conftest.py": "29de18db354e19329acdc298df203fe2234c0fdba08ef70d13b3630c98adb4d2",
   "tests/golden/registry.json": "b8328f4d830b6bc370fe8739395cdcaf256aeb11e0efaa27b54c2420ec7734fa",
   "tests/golden/schema.json": "aed03f8bcec4b3f7e9f28b6fa2abb2b91fd01da624f2d8e05d7bf3b8699960ab",
   "tests/stubcore.py": "f44de726a6c0b80b462445f091a2a868f208fbc1b4d4a3424797d4eb4caabdd8",
