@@ -96,7 +96,11 @@ class Hive:
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("HIVE_", "HCONFIG_"))}
         self.env.update(HIVE_HOME=str(self.home / "hive"), HIVE_IDENTITY_STASH=str(self.home / "stash"),
                         HIVE_MODULES_DIR=str(self.home / "modules"), HOME=str(self.home / "user"),
-                        HIVE_OWNER_KEY_PASSPHRASE="ci")
+                        HIVE_OWNER_KEY_PASSPHRASE="ci",
+                        # pinned: the core's bin_dir() prefers the directory `hive-mind` is found in on PATH over
+                        # HOME, so on a node with hive-mind installed `module add` would write the real
+                        # ~/.local/bin/alpha and beta (hwatch-dev#146)
+                        HIVE_BIN_DIR=str(self.home / "user" / ".local" / "bin"))
         for var in ("TERMUX_VERSION", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):   # a unit is written, never started
             self.env.pop(var, None)
         (self.home / "user" / ".local" / "bin").mkdir(parents=True)
@@ -141,6 +145,8 @@ def build_hive(core_dir, root):
     make_module(core_dir, root / "src-beta", "beta", BETA, seed)
     for name in ("alpha", "beta"):
         h.core_run("module", "add", name, "--from", str(root / f"src-{name}"), "--publisher", pub, "--non-interactive")
+    state = json.loads((root / "hive" / ".modules.json").read_text())
+    assert {state[n]["bin_dir"] for n in ("alpha", "beta")} == {h.env["HIVE_BIN_DIR"]}
     h.core_run("config", "set", "cap_self", "0.5")
     h.core_run("module", "config", "alpha", "set", "limit", "7", "--fleet")
     h.core_run("module", "config", "alpha", "set", "seat.dev.enabled", "true", "--fleet-node", device)
